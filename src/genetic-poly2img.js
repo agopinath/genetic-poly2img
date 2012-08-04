@@ -41,11 +41,12 @@ var LOG_WINDOW = null;
 var CURR_ORGANISMS = null;
 
 var	BEST_FITNESS = 0;
+var	BEST_NORM_FITNESS = 1.0;
 var	BEST_ORGANISM = new Organism();
 
 var GENERATION_COUNT = 0;
 var ORGANISM_INDEX = 0;
-var ORGANISMS_PER_GENERATION = 2;
+var ORGANISMS_PER_GENERATION = 100;
 
 var MUTATION_COUNT = 0;
 
@@ -92,7 +93,7 @@ function initImage() {
 function initOrganisms() {
 	CURR_ORGANISMS = [];
 	BEST_ORGANISM = new Organism();
-	
+	var	BEST_NORM_FITNESS = 1.0;
 	for (var i = ORGANISMS_PER_GENERATION - 1; i >= 0; i--) {
 		CURR_ORGANISMS[i] = new Organism();
 		CURR_ORGANISMS[i].initializeRandomGenome();
@@ -101,7 +102,7 @@ function initOrganisms() {
 
 function initOtherStuff() {
 	BEST_FITNESS = 0;  // fitness ranges between 0.0 and 1.0. higher values indicate a higher fitness. initialized to the least fit value, and should decrease with evolution
-	MUTATION_LEVEL = "medium";
+	BEST_NORM_FITNESS = 1.0;
 	
 	MUTATION_COUNT = 0;
 	GENERATION_COUNT = 0;
@@ -141,9 +142,10 @@ function evolveOrganisms() {
 		
 	if(currentOrganism.fitness > BEST_FITNESS) {
 		BEST_FITNESS = currentOrganism.fitness;
+		BEST_NORM_FITNESS = Organism.normalizeFitness(BEST_FITNESS);
 		Organism.doOrganismCopy(currentOrganism, BEST_ORGANISM);
 		
-		debug("best fitness: " + Organism.normalizeFitness(BEST_FITNESS));
+		debug("best fitness: " + BEST_NORM_FITNESS);
 		
 		drawOrganism(currentOrganism, ctxBest);
 	}
@@ -154,11 +156,15 @@ function evolveOrganisms() {
 		 
 		CURR_ORGANISMS = createNewGeneration(CURR_ORGANISMS, false);
 	
-		/*if(BEST_FITNESS >= 0.98) {
+		if(BEST_NORM_FITNESS >= 0.98) {
 			debug("!!reached optimum fitness");
 			alert("!!reached optimum fitness");
 			pauseEvolution();
-		}*/
+		}
+		
+		if(BEST_NORM_FITNESS >= 0.55) {
+			Organism.doMutate = mutate_hard;
+		}
 		
 		GENERATION_COUNT++;
 		
@@ -194,10 +200,11 @@ function createNewGeneration(oldGeneration, elitismEnabled) {
 		if(Organism.isToCrossover())
 			Organism.doCrossover(parents[0], parents[1]);
 		
-		if(Organism.isToMutate()) {
-			parents[0].mutate();
-			parents[1].mutate();
-		}
+		if(Organism.isToMutate()) 
+			Organism.doMutate(parents[0]);
+			
+		if(Organism.isToMutate()) 	
+			Organism.doMutate(parents[1]);
 		
 		children[i] = parents[0];
 		children[i+1] = parents[1];
@@ -259,6 +266,8 @@ function Organism() {
 }
 
 Organism.NUM_CHROMOSOMES = 50;
+Organism.MUTATION_CHANCE = 0.2;
+Organism.CROSSOVER_CHANCE = 0.85;
 
 Organism.doOrganismCopy = function(source, dest) {
 	for (var i = Organism.NUM_CHROMOSOMES - 1; i >= 0; i--) {
@@ -308,11 +317,11 @@ Organism.prototype.initializeRandomGenome = function() {
 
 
 Organism.isToMutate = function() {
-	return (randFloat(1.0) < 0.06);
+	return (randFloat(1.0) < Organism.MUTATION_CHANCE);
 }
 
 Organism.isToCrossover = function() {
-	return (randFloat(1.0) < 0.65);
+	return (randFloat(1.0) < Organism.CROSSOVER_CHANCE);
 }
 
 Organism.doCrossover = function(parentOne, parentTwo) {
@@ -327,9 +336,9 @@ Organism.doCrossover = function(parentOne, parentTwo) {
 	parentTwo.chromosomes = parentTwo.chromosomes.concat(tempBufferA);
 }
 
-Organism.prototype.mutate_medium = function() {
-	var mutation_index = randInt(this.chromosomes.length);
-	var randChromosome = this.chromosomes[mutation_index];
+Organism.mutate_medium = function(organism) {
+	var mutation_index = randInt(organism.chromosomes.length);
+	var randChromosome = organism.chromosomes[mutation_index];
 	var rouletteHit = randFloat(8.0);
 	
 	if(rouletteHit < 4.0) { // 50% chance of mutating polygon color
@@ -351,12 +360,24 @@ Organism.prototype.mutate_medium = function() {
 	}
 	
 	MUTATION_COUNT++;
-	return mutation_index;
 }
 
-Organism.prototype.mutate = function() {
-	this.mutate_medium();
+
+Organism.mutate_hard = function(organism) {
+	var mutation_index = randInt(organism.chromosomes.length);
+	var randChromosome = organism.chromosomes[mutation_index];
+	var rouletteHit = randFloat(8.0);
+	
+	if(rouletteHit < 4.0) { // 50% chance of mutating polygon color
+		randChromosome.randomizeGenes("allColors");
+	} else { // 50% chance of mutating polygon vertices
+		randChromosome.randomizeGenes("pointsXY");
+	}
+	
+	MUTATION_COUNT++;
 }
+
+Organism.doMutate = Organism.mutate_medium;
 
 Organism.prototype.drawGenome = function(context) {
 	for (var i = Organism.NUM_CHROMOSOMES - 1; i >= 0; i--) {
@@ -387,6 +408,12 @@ Chromosome.prototype.randomizeGenes = function(genes) {
 			this.b = randInt(256);
 			break;
 		case "alpha":
+			this.a = randFloat(1.0);
+			break;
+		case "allColors":
+			this.r = randInt(256);
+			this.g = randInt(256);
+			this.b = randInt(256);
 			this.a = randFloat(1.0);
 			break;
 		case "pointsX":
