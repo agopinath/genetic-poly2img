@@ -34,20 +34,20 @@ var ctxImg = null;
 var ctxBest = null;
 var ctxRlt = null;
 	
-var ORIG_DATA = null;
 var ORIG_PIXELS = null;
 
 var LOG_WINDOW = null;
 
 var CURR_ORGANISMS = null;
 
-var	BEST_FITNESS = 0.0;
+var	BEST_FITNESS = 0;
+var	BEST_ORGANISM = new Organism();
+
 var GENERATION_COUNT = 0;
 var ORGANISM_INDEX = 0;
-var ORGANISMS_PER_GENERATION = 100;
+var ORGANISMS_PER_GENERATION = 2;
 
 var MUTATION_COUNT = 0;
-var MUTATION_LEVEL = "medium";
 
 var EVOLVE_INTERVAL_ID = null;
 var IS_EVOLVING = false;
@@ -86,13 +86,12 @@ function initImage() {
 
 	ctxImg.drawImage(img, 0, 0);
 
-	ORIG_DATA = ctxImg.getImageData(0, 0, IMAGE_WIDTH, IMAGE_HEIGHT);
-	ORIG_PIXELS = new Uint32Array(ORIG_DATA.data.length);
-	ORIG_PIXELS.set(ORIG_DATA.data);
+	ORIG_PIXELS = ctxImg.getImageData(0, 0, IMAGE_WIDTH, IMAGE_HEIGHT).data;
 }
 
 function initOrganisms() {
 	CURR_ORGANISMS = [];
+	BEST_ORGANISM = new Organism();
 	
 	for (var i = ORGANISMS_PER_GENERATION - 1; i >= 0; i--) {
 		CURR_ORGANISMS[i] = new Organism();
@@ -101,7 +100,7 @@ function initOrganisms() {
 }
 
 function initOtherStuff() {
-	BEST_FITNESS = 0.0;  // fitness ranges between 0.0 and 1.0. higher values indicate a higher fitness. initialized to the least fit value, and should decrease with evolution
+	BEST_FITNESS = 0;  // fitness ranges between 0.0 and 1.0. higher values indicate a higher fitness. initialized to the least fit value, and should decrease with evolution
 	MUTATION_LEVEL = "medium";
 	
 	MUTATION_COUNT = 0;
@@ -140,22 +139,26 @@ function evolveOrganisms() {
 	drawOrganism(currentOrganism, ctxRlt);
 	calculateAndSetFitness(currentOrganism);
 		
-	if(currentOrganism.normFitness > BEST_FITNESS) {
-		BEST_FITNESS = currentOrganism.normFitness;
+	if(currentOrganism.fitness > BEST_FITNESS) {
+		BEST_FITNESS = currentOrganism.fitness;
+		Organism.doOrganismCopy(currentOrganism, BEST_ORGANISM);
+		
+		debug("best fitness: " + Organism.normalizeFitness(BEST_FITNESS));
+		
 		drawOrganism(currentOrganism, ctxBest);
 	}
 	
 	if(ORGANISM_INDEX == ORGANISMS_PER_GENERATION - 1) { 
 		
 		ORGANISM_INDEX = 0;
-		
-		CURR_ORGANISMS = createNewGeneration(CURR_ORGANISMS);
+		 
+		CURR_ORGANISMS = createNewGeneration(CURR_ORGANISMS, false);
 	
-		if(BEST_FITNESS >= 0.98) {
+		/*if(BEST_FITNESS >= 0.98) {
 			debug("!!reached optimum fitness");
 			alert("!!reached optimum fitness");
 			pauseEvolution();
-		}
+		}*/
 		
 		GENERATION_COUNT++;
 		
@@ -171,7 +174,7 @@ function evolveOrganisms() {
 	ORGANISM_INDEX++;
 }
 
-function createNewGeneration(oldGeneration) {
+function createNewGeneration(oldGeneration, elitismEnabled) {
 	var parents = null;
 	var children = [];
 	var currTotalFitness = 0;
@@ -180,18 +183,22 @@ function createNewGeneration(oldGeneration) {
 		currTotalFitness += oldGeneration[i].fitness;
 	}
 	
-	for (var i = 0, l = ORGANISMS_PER_GENERATION; i < l; i+=2) {
-		parents = rouletteSelect(oldGeneration, currTotalFitness);
+	var startPoint = elitismEnabled ? 1 : 0;
+	
+	if(elitismEnabled)
+		children[0] = BEST_ORGANISM;
+	
+	for (var i = startPoint, l = ORGANISMS_PER_GENERATION; i < l; i+=2) {
+		parents = rouletteSelect(oldGeneration, currTotalFitness);	
 		
 		if(Organism.isToCrossover())
 			Organism.doCrossover(parents[0], parents[1]);
 		
-		if(Organism.isToMutate())
-			parents[0].mutate(MUTATION_LEVEL);
-			
-		if(Organism.isToMutate())
-			parents[1].mutate(MUTATION_LEVEL);
-			
+		if(Organism.isToMutate()) {
+			parents[0].mutate();
+			parents[1].mutate();
+		}
+		
 		children[i] = parents[0];
 		children[i+1] = parents[1];
 	}
@@ -220,24 +227,21 @@ function rouletteSelect(competitors, totalFitnessSeed) {
 }
 
 function calculateAndSetFitness(organism) {
-	var ORIG_PIXELS_CACHE = ORIG_PIXELS; // declaring 
-	var draftData = ctxRlt.getImageData(0, 0, IMAGE_WIDTH, IMAGE_HEIGHT);
-	var draftPixels = new Uint32Array(draftData.data.length);
-	draftPixels.set(draftData.data);
+	var ORIG_PIXELS_CACHE = ORIG_PIXELS;
+	var draftPixels = ctxRlt.getImageData(0, 0, IMAGE_WIDTH, IMAGE_HEIGHT).data;
 	
 	var RANGE_MAX = (256 * 4) * ((IMAGE_HEIGHT * IMAGE_WIDTH)/SAMPLE_RATE); // upper bound of difference between the current organism and the original organism (image) -- when the organisms are exactly different
 	var RANGE_MIN = 0; // lower bound of difference between the current organism and the original organism (image) -- when the organisms are exactly the same
 	
 	var total_difference = 0; // total difference of all corresponding pixels between original organism and current organism
 	
-	for(var a = 0, b = draftPixels.length; a < b; a+=SAMPLE_RATE) {
+	for(var a = 0, b = draftPixels.length, c = SAMPLE_RATE; a < b; a+=c) {
        total_difference += Math.abs(draftPixels[a] - ORIG_PIXELS_CACHE[a]);    // difference in RGBA components of the current pixel
 	};
 		
 	var total_fitness = (RANGE_MAX-total_difference);
 	
 	organism.fitness = total_fitness;
-	organism.normFitness = Organism.normalizeFitness(total_fitness, RANGE_MAX, RANGE_MIN);
 }
 
 function drawOrganism(organism, context) {
@@ -248,7 +252,6 @@ function drawOrganism(organism, context) {
 function Organism() {
 	this.chromosomes = [];
 	this.fitness = 0;
-	this.normFitness = 0.0;
 	
 	for (var i = Organism.NUM_CHROMOSOMES - 1; i >= 0; i--) {
 		this.chromosomes[i] = new Chromosome();
@@ -268,8 +271,8 @@ Organism.doOrganismCopy = function(source, dest) {
 		destChrome.a = srcChrome.a;
 
 		for (var i = Chromosome.NUM_VERTICES - 1; i >= 0; i--) {
-			destChrome.pointsX[j] = srcChrome.pointsX[j];
-			destChrome.pointsY[j] = srcChrome.pointsY[j];
+			destChrome.pointsX[i] = srcChrome.pointsX[i];
+			destChrome.pointsY[i] = srcChrome.pointsY[i];
 		}
 	}
 }
@@ -289,7 +292,10 @@ Organism.doChromosomeCopy = function(source, dest, chromosomeIdx) {
 		}
 }
 
-Organism.normalizeFitness = function(rawFitness, RANGE_MAX, RANGE_MIN) {
+Organism.normalizeFitness = function(rawFitness) {
+	var RANGE_MAX = (256 * 4) * ((IMAGE_HEIGHT * IMAGE_WIDTH)/SAMPLE_RATE);
+	var RANGE_MIN = 0;
+	
 	return (((1-0) * (rawFitness - RANGE_MIN)) / (RANGE_MAX - RANGE_MIN)) + 0;
 }
 
@@ -298,6 +304,15 @@ Organism.prototype.initializeRandomGenome = function() {
 		this.chromosomes[i] = new Chromosome();
 		this.chromosomes[i].randomizeGenes("all");
 	}
+}
+
+
+Organism.isToMutate = function() {
+	return (randFloat(1.0) < 0.06);
+}
+
+Organism.isToCrossover = function() {
+	return (randFloat(1.0) < 0.65);
 }
 
 Organism.doCrossover = function(parentOne, parentTwo) {
@@ -310,81 +325,37 @@ Organism.doCrossover = function(parentOne, parentTwo) {
 	// swap removed ends of the arrays
 	parentOne.chromosomes = parentOne.chromosomes.concat(tempBufferB); 
 	parentTwo.chromosomes = parentTwo.chromosomes.concat(tempBufferA);
-	
-	/*var attributes = ["red", "green", "blue", "alpha", "pointsX", "pointsY"];
-	
-	var tempBuffer;
-	switch(attributes[randInt(attributes.length)]) {
-		case "red":
-			tempBuffer = parentOne.
-			break;
-		case "green":
-			break;
-		case "blue":
-			break;
-		case "alpha":
-			break;
-		case "pointsX":
-			break;
-		case "pointsY":
-			break;
-										
-	}*/
 }
 
-Organism.isToMutate = function() {
-	return (randFloat(1.0) < 0.03);
-}
-
-Organism.isToCrossover = function() {
-	return (randFloat(1.0) < 0.75);
-}
-
-Organism.prototype.mutate = function(mutationLevel) {
+Organism.prototype.mutate_medium = function() {
 	var mutation_index = randInt(this.chromosomes.length);
 	var randChromosome = this.chromosomes[mutation_index];
 	var rouletteHit = randFloat(8.0);
 	
 	if(rouletteHit < 4.0) { // 50% chance of mutating polygon color
-		switch(mutationLevel) {
-			case "soft":
-				break;
-			case "medium":
-				if(rouletteHit < 1.0) {
-					randChromosome.randomizeGenes("red");
-				} else if(rouletteHit >= 1.0 && rouletteHit < 2.0) {
-					randChromosome.randomizeGenes("green");
-				} else if(rouletteHit >= 2.0 && rouletteHit < 3.0) {
-					randChromosome.randomizeGenes("blue");
-				} else if(rouletteHit >= 3.0) {
-					randChromosome.randomizeGenes("alpha");
-				} 
-				break;
-			case "hard":
-				break;
-			default:
-				err("unrecognized mutation level: " + mutationLevel);
-		}
+		if(rouletteHit < 1.0) {
+			randChromosome.randomizeGenes("red");
+		} else if(rouletteHit >= 1.0 && rouletteHit < 2.0) {
+			randChromosome.randomizeGenes("green");
+		} else if(rouletteHit >= 2.0 && rouletteHit < 3.0) {
+			randChromosome.randomizeGenes("blue");
+		} else if(rouletteHit >= 3.0) {
+			randChromosome.randomizeGenes("alpha");
+		} 
 	} else { // 50% chance of mutating polygon vertices
-		switch(mutationLevel) {
-			case "soft":
-				break;
-			case "medium":
-				if(rouletteHit < 6.0) {
-					randChromosome.randomizeGenes("pointsX");
-				} else if(rouletteHit >= 6.0 && rouletteHit < 8.0){
-					randChromosome.randomizeGenes("pointsY");
-				}
-				break;
-			case "hard":
-				break;
-			default:
-				err("unrecognized mutation level: " + mutationLevel);
+		if(rouletteHit < 6.0) {
+			randChromosome.randomizeGenes("pointsX");
+		} else if(rouletteHit >= 6.0 && rouletteHit < 8.0){
+			randChromosome.randomizeGenes("pointsY");
 		}
 	}
 	
 	MUTATION_COUNT++;
 	return mutation_index;
+}
+
+Organism.prototype.mutate = function() {
+	this.mutate_medium();
 }
 
 Organism.prototype.drawGenome = function(context) {
@@ -442,7 +413,7 @@ Chromosome.prototype.randomizeGenes = function(genes) {
 			this.r = randInt(256);
 			this.g = randInt(256);
 			this.b = randInt(256);
-			this.a = 1.0;//randFloat(1.0);
+			this.a = 0.0;//randFloat(1.0);
 
 			this.pointsX.length = [];
 			this.pointsY.length = [];
@@ -486,7 +457,6 @@ Chromosome.prototype.draw = function(context) {
 	context.closePath();
 	context.fill();
 }
-
 
 // UTILITY/CONVENIENCE/OTHER functions
 function clearCanvas(context) {
@@ -546,7 +516,7 @@ function warn(s) {
 function printStats() {
 	raw("============STATS============");
 	raw("current generation: " + GENERATION_COUNT);
-	raw("best fitness so far: " + ((1.0-BEST_FITNESS) * 100).toFixed(2)+"%");
+	raw("best fitness so far: " + (Organism.normalizeFitness(BEST_FITNESS) * 100).toFixed(2)+"%");
 	raw("total mutations so far: " + MUTATION_COUNT);
 	raw("elapsed time: " + (SECOND_COUNT/60).toFixed(0) + " minutes " + (SECOND_COUNT % 60) + " seconds");
 	raw("=============================");
