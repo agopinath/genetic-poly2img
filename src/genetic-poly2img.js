@@ -233,6 +233,18 @@ function rouletteSelect(competitors, totalFitnessSeed) {
 	return parents;
 }
 
+function strictSelect(competitors, totalFitnessSeed) {
+	var parents = [];
+	var bestFitness = 0;
+	var currBestOrganism = null;
+	
+	competitors.sort(Organism.sortOrganismFunction);
+	parents[0] = competitors[0];
+	parents[1] = competitors[1];
+	
+	return parents;
+}
+
 function calculateAndSetFitness(organism) {
 	var ORIG_PIXELS_CACHE = ORIG_PIXELS;
 	var draftPixels = ctxRlt.getImageData(0, 0, IMAGE_WIDTH, IMAGE_HEIGHT).data;
@@ -308,13 +320,9 @@ Organism.normalizeFitness = function(rawFitness) {
 	return (((1-0) * (rawFitness - RANGE_MIN)) / (RANGE_MAX - RANGE_MIN)) + 0;
 }
 
-Organism.prototype.initializeRandomGenome = function() {
-	for (var i = Organism.NUM_CHROMOSOMES - 1; i >= 0; i--) {
-		this.chromosomes[i] = new Chromosome();
-		this.chromosomes[i].randomizeGenes("all");
-	}
+Organism.sortOrganismFunction = function(organismOne, organismTwo) {
+	return organismOne.fitness - organismTwo.fitness;
 }
-
 
 Organism.isToMutate = function() {
 	return (randFloat(1.0) < Organism.MUTATION_CHANCE);
@@ -378,6 +386,14 @@ Organism.mutate_hard = function(organism) {
 }
 
 Organism.doMutate = Organism.mutate_medium;
+
+Organism.prototype.initializeRandomGenome = function() {
+	for (var i = Organism.NUM_CHROMOSOMES - 1; i >= 0; i--) {
+		this.chromosomes[i] = new Chromosome();
+		this.chromosomes[i].randomizeGenes("all");
+	}
+}
+
 
 Organism.prototype.drawGenome = function(context) {
 	for (var i = Organism.NUM_CHROMOSOMES - 1; i >= 0; i--) {
