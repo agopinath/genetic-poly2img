@@ -41,7 +41,7 @@ var LOG_WINDOW = null;
 
 var CURR_ORGANISMS = null;
 
-var	BEST_FITNESS = 1.0;
+var	BEST_FITNESS = 0.0;
 var GENERATION_COUNT = 0;
 var ORGANISM_INDEX = 0;
 var ORGANISMS_PER_GENERATION = 100;
@@ -49,10 +49,10 @@ var ORGANISMS_PER_GENERATION = 100;
 var MUTATION_COUNT = 0;
 var MUTATION_LEVEL = "medium";
 
-var TIMER_INTERVAL_ID = null;
 var EVOLVE_INTERVAL_ID = null;
 var IS_EVOLVING = false;
 
+var MILLI_COUNT = 0;
 var SECOND_COUNT = 0;
 var SAMPLE_RATE = 1;
 
@@ -101,7 +101,7 @@ function initOrganisms() {
 }
 
 function initOtherStuff() {
-	BEST_FITNESS = 1.0;  // fitness ranges between 0.0 and 1.0. lower values indicate a higher fitness. initialized to the least fit value, and should decrease with evolution
+	BEST_FITNESS = 0.0;  // fitness ranges between 0.0 and 1.0. higher values indicate a higher fitness. initialized to the least fit value, and should decrease with evolution
 	MUTATION_LEVEL = "medium";
 	
 	MUTATION_COUNT = 0;
@@ -124,7 +124,6 @@ function startEvolution() {
 	IS_EVOLVING = true;
 	debug("starting evolution");
 	EVOLVE_INTERVAL_ID = setInterval("evolveOrganisms();", 0);
-	TIMER_INTERVAL_ID = setInterval("SECOND_COUNT++;", 1000);
 }
 
 function pauseEvolution() {
@@ -132,7 +131,6 @@ function pauseEvolution() {
 	debug("pausing evolution");
 	printStats();
 	clearInterval(EVOLVE_INTERVAL_ID);
-	clearInterval(TIMER_INTERVAL_ID);
 }
 
 // ALGORITHM CORE FUNCTIONS
@@ -140,40 +138,53 @@ function evolveOrganisms() {
 	var currentOrganism = CURR_ORGANISMS[ORGANISM_INDEX];
 		
 	drawOrganism(currentOrganism, ctxRlt);
-	calculateFitness(currentOrganism);
+	calculateAndSetFitness(currentOrganism);
 		
-	if(currentOrganism.fitness < BEST_FITNESS) {
-		BEST_FITNESS = currentOrganism.fitness;
+	if(currentOrganism.normFitness > BEST_FITNESS) {
+		BEST_FITNESS = currentOrganism.normFitness;
 		drawOrganism(currentOrganism, ctxBest);
 	}
 	
-	if(ORGANISM_INDEX === ORGANISMS_PER_GENERATION - 1) { 
+	if(ORGANISM_INDEX == ORGANISMS_PER_GENERATION - 1) { 
+		
 		ORGANISM_INDEX = 0;
-		createNewGeneration(CURR_ORGANISMS);
+		
+		CURR_ORGANISMS = createNewGeneration(CURR_ORGANISMS);
 	
-		if(BEST_FITNESS <= 0.02) {
+		if(BEST_FITNESS >= 0.98) {
 			debug("!!reached optimum fitness");
 			alert("!!reached optimum fitness");
 			pauseEvolution();
 		}
 		
 		GENERATION_COUNT++;
+		
 		return;
 	}
 	
+	if(MILLI_COUNT === 1000) {
+		MILLI_COUNT = 0;
+		SECOND_COUNT++;
+	}
+		
+	MILLI_COUNT++;
 	ORGANISM_INDEX++;
 }
 
 function createNewGeneration(oldGeneration) {
-	return; // TOBE removed
-	
 	var parents = null;
 	var children = [];
+	var currTotalFitness = 0;
+	
+	for (var i = 0, l = ORGANISMS_PER_GENERATION; i < l; i++) {
+		currTotalFitness += oldGeneration[i].fitness;
+	}
 	
 	for (var i = 0, l = ORGANISMS_PER_GENERATION; i < l; i+=2) {
-		parents = rouletteSelect(oldGeneration);
+		parents = rouletteSelect(oldGeneration, currTotalFitness);
 		
-		Organism.doCrossover(parents[0], parents[1]);
+		if(Organism.isToCrossover())
+			Organism.doCrossover(parents[0], parents[1]);
 		
 		if(Organism.isToMutate())
 			parents[0].mutate(MUTATION_LEVEL);
@@ -188,11 +199,27 @@ function createNewGeneration(oldGeneration) {
 	return children;
 }
 
-function rouletteSelect(competitors) {
-	return null; // TOBE changed
+function rouletteSelect(competitors, totalFitnessSeed) {
+	var parents = [];
+	var roulette_mark;
+	var tempTotalFitness;
+	
+	while(parents.length < 2) {
+		tempTotalFitness = 0;
+		roulette_mark = randInt(totalFitnessSeed);
+		
+		for (var i = 0, l = ORGANISMS_PER_GENERATION; i < l; i++) {
+			tempTotalFitness += competitors[i].fitness;
+			
+			if(tempTotalFitness > roulette_mark)
+				parents.push(competitors[i]);
+		}
+	}
+	
+	return parents;
 }
 
-function calculateFitness(organism) {
+function calculateAndSetFitness(organism) {
 	var ORIG_PIXELS_CACHE = ORIG_PIXELS; // declaring 
 	var draftData = ctxRlt.getImageData(0, 0, IMAGE_WIDTH, IMAGE_HEIGHT);
 	var draftPixels = new Uint32Array(draftData.data.length);
@@ -206,11 +233,11 @@ function calculateFitness(organism) {
 	for(var a = 0, b = draftPixels.length; a < b; a+=SAMPLE_RATE) {
        total_difference += Math.abs(draftPixels[a] - ORIG_PIXELS_CACHE[a]);    // difference in RGBA components of the current pixel
 	};
+		
+	var total_fitness = (RANGE_MAX-total_difference);
 	
-	var normalized_fitness = (((1-0) * (total_difference - RANGE_MIN)) / (RANGE_MAX - RANGE_MIN)) + 0;
-	
-	organism.fitness = normalized_fitness;
-	return normalized_fitness;
+	organism.fitness = total_fitness;
+	organism.normFitness = Organism.normalizeFitness(total_fitness, RANGE_MAX, RANGE_MIN);
 }
 
 function drawOrganism(organism, context) {
@@ -220,7 +247,8 @@ function drawOrganism(organism, context) {
 
 function Organism() {
 	this.chromosomes = [];
-	this.fitness = 1.0;
+	this.fitness = 0;
+	this.normFitness = 0.0;
 	
 	for (var i = Organism.NUM_CHROMOSOMES - 1; i >= 0; i--) {
 		this.chromosomes[i] = new Chromosome();
@@ -261,6 +289,10 @@ Organism.doChromosomeCopy = function(source, dest, chromosomeIdx) {
 		}
 }
 
+Organism.normalizeFitness = function(rawFitness, RANGE_MAX, RANGE_MIN) {
+	return (((1-0) * (rawFitness - RANGE_MIN)) / (RANGE_MAX - RANGE_MIN)) + 0;
+}
+
 Organism.prototype.initializeRandomGenome = function() {
 	for (var i = Organism.NUM_CHROMOSOMES - 1; i >= 0; i--) {
 		this.chromosomes[i] = new Chromosome();
@@ -269,7 +301,35 @@ Organism.prototype.initializeRandomGenome = function() {
 }
 
 Organism.doCrossover = function(parentOne, parentTwo) {
-	return; // TOBE changed
+	var swapLocation = randInt(Organism.NUM_CHROMOSOMES);
+
+	// remove end of arrays from swapLocation and return removed part
+	var tempBufferA = parentOne.chromosomes.splice(swapLocation); 
+	var tempBufferB = parentTwo.chromosomes.splice(swapLocation); 
+
+	// swap removed ends of the arrays
+	parentOne.chromosomes = parentOne.chromosomes.concat(tempBufferB); 
+	parentTwo.chromosomes = parentTwo.chromosomes.concat(tempBufferA);
+	
+	/*var attributes = ["red", "green", "blue", "alpha", "pointsX", "pointsY"];
+	
+	var tempBuffer;
+	switch(attributes[randInt(attributes.length)]) {
+		case "red":
+			tempBuffer = parentOne.
+			break;
+		case "green":
+			break;
+		case "blue":
+			break;
+		case "alpha":
+			break;
+		case "pointsX":
+			break;
+		case "pointsY":
+			break;
+										
+	}*/
 }
 
 Organism.isToMutate = function() {
